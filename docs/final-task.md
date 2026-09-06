@@ -1,0 +1,21 @@
+## Inputs
+- I am a CS student participating in SIH 2026 (https://sih.gov.in/sih2026PS)
+- We are in the first phase of idea / prototype submission
+- Requirement story is at @docs/sih-story.md
+- PowerPoint presentation is at @docs/talent-sync.pptx
+- We will need two artifacts generated before our idea presentation to the panel
+  - A PowerPoint presentation
+  - A real prototype with one key functionality implemented
+- Technology stack
+  - ReactJS (frontend)
+  - Python (backend)
+  - PostgreSQL (database) 
+- This prototype will be deployed to local laptop only, so just quick alternatives (e.g. what can be the quick way to create db locally -  use ready made docker image)
+- for the backend tech stack and structure, refer to @../accelix-services project
+- we have only 2 days left for our first presentation + prototype demo
+## Task
+ - Go through the original requirement and PowerPoint prepared by our team
+ - Suggest one single key backend functionality that we can include in our prototype (e.g. when corporate HR logs in , they can see recommended list of candidates in a given institute that have a strong match for their job description or skill sets they are looking for)
+ - Suggest UI screens that we can include in our prototype (e.g. login, dashboard for each role(student,academic institute,corporate), list view of candidates/corporates/institutes based on role, detail view of a given candidate/institute/corporate)
+ - We will wire only one screen with the backend that has one key functionality implemented, rest will be dummy data (e.g. have dummy data as json files)
+ - Generate a full plan for the prototype only at @docs/sih-plan.md that includes: scope, tech stack, UI screens, backend functionality, backend design (classes, functions, models)
