@@ -4,28 +4,7 @@
 
 ---
 
-# 0. Architect Review Notes (v2)
-
-Reviewed against `sih-story.md`, the pitch deck (`ppt-images.png`) and the UI mocks (`ui-images.png`). The v1 domain model and DDL are solid — normalized, UUID-based, cleanly layered, and genuinely future-proof for AI/recommendation phases. The tech stack (React + FastAPI + PostgreSQL + AWS) is kept as-is; changes below are additive libraries/patterns on top of it, not a stack change.
-
-**Gaps found (things the UI/pitch already promise but v1 schema has no model for):**
-
-1. **Notifications** — Screen 15 of the UI mock is a full notification center (application/opportunity/system, read/unread), but v1 has no `notifications` table anywhere, not even as a "future" placeholder like recommendations. Added as a Phase-1-ready table (Section 14A).
-2. **Search** — Screen 5 shows a search box over internships/jobs. At institution/industry scale, `ILIKE` scans on `opportunities` won't hold up. Added a generated `tsvector` column + GIN index (Postgres full-text search — no new infra needed yet).
-3. **Auth token lifecycle & security** — The doc says "authentication-ready" but never models it. For a platform explicitly pitched on "Strong authentication & data encryption" (Slide 3), you need revocable refresh tokens and password-reset tokens, not just a `password_hash` column. Added `refresh_tokens` and `password_reset_tokens` tables.
-4. **Audit trail** — Beyond `application_status_history`, there's no generic audit log for who changed what (opportunity edits, profile verification, admin actions). Added a lightweight `audit_logs` table — important once Institution Admins and Platform Admins can act on other users' data.
-5. **Destructive cascades on business records** — `ON DELETE CASCADE` from `users` wipes `applications`, `assessment_attempts`, `documents`, etc. That's fine for a throwaway account, but it silently destroys placement/analytics history the institution dashboards (Screens 12–13) depend on. Recommended a soft-delete (`deleted_at`) convention for record-of-truth tables instead of hard cascade deletes.
-6. **File upload path** — "Resume download / digital portfolio" is core Phase-1 UI (Screen 7), not a future integration, but the doc defers all storage. Clarified that Phase 1 should wire real S3 (or MinIO locally) with presigned URLs — `documents.file_url` needs somewhere real to point to from day one.
-7. **Read-heavy aggregate dashboards** — Screens 12–13 (institution placement trends, skill distribution donut) aggregate across potentially thousands of rows. Running that live against OLTP tables on every page load doesn't scale. Added materialized views + a refresh strategy instead of ad-hoc COUNT/GROUP BY on request.
-8. **No background job story** — sending notifications, refreshing the above materialized views, and (later) generating recommendations all need an async worker, or they'll block request/response cycles. Added Redis + a lightweight async task queue to the architecture diagram.
-9. **No observability** — the pitch deck's own methodology (Slide 2, step 5: "Monitor & Improve") isn't reflected anywhere in the technical doc. Added a short NFR section covering logging, health checks, and metrics.
-10. **Institution ↔ Industry "partnership" vs. one-off collaboration** — the Institution Dashboard mock shows a persistent "Industry Partners: 32" count, which is a different concept from a time-boxed `collaboration` (mentorship/workshop/etc.). Clarified this is derived from distinct organization pairs across collaborations/opportunities rather than a new table — noted explicitly so it isn't reinvented ad hoc later.
-
-None of these require touching the existing tables' shapes — they're additive, which preserves the "don't redesign the core schema later" goal already stated in the doc.
-
----
-
-# 1. Purpose
+# 1. Introduction
 
 TalentSync is a unified Academia–Industry Collaboration Platform supporting:
 
@@ -54,9 +33,11 @@ Profile → Skill Assessment → Skill Profile → Skill Gap Analysis
 → Progress Tracking → Feedback & Analytics
 ```
 
-# 2. Phase Strategy
+# 2. Architecture & Design
 
-## Phase 1: Foundational CRUD
+## 2.1 Phase Strategy
+
+### Phase 1: Foundational CRUD
 
 Implement:
 
@@ -104,11 +85,11 @@ FastAPI
 
 Use a modular monolith. Redis and the async worker are lightweight additions (not a services split) — they run as a second small process against the same codebase, so the monolith boundary is unchanged. This keeps Phase 1 deployable as "one API + one worker + Postgres + Redis," which is still simple to run on a single AWS environment (e.g., ECS with two task definitions) while leaving room to scale the worker independently later.
 
-# 2A. Non-Functional Requirements & Cross-Cutting Concerns
+## 2.2 Non-Functional Requirements & Cross-Cutting Concerns
 
 These apply across every module below and should be scaffolded in Phase 1, even though most of the *content* they protect (recommendations, analytics, integrations) lands in later phases.
 
-## Security
+### Security
 - Password hashing via `argon2` (preferred) or `bcrypt` — never store or log raw passwords.
 - Access tokens: short-lived JWT (15–30 min). Refresh tokens: opaque, stored hashed in `refresh_tokens`, revocable (needed because JWTs alone can't be invalidated on logout/compromise).
 - Password reset via single-use, expiring tokens in `password_reset_tokens` — never email a raw reusable link with no expiry.
@@ -116,27 +97,29 @@ These apply across every module below and should be scaffolded in Phase 1, even 
 - Rate limiting on auth endpoints and public opportunity/search endpoints (`slowapi`, backed by Redis) to blunt credential stuffing and scraping.
 - Field-level encryption is not needed for Phase 1 (no PII beyond standard profile data); rely on TLS in transit and AWS-managed encryption at rest (RDS/S3 SSE).
 
-## Auditability
+### Auditability
 - `audit_logs` captures who changed what on sensitive entities (opportunity edits, application status changes, verification actions, admin overrides) — separate from `application_status_history`, which is domain-specific.
 - Soft delete (`deleted_at TIMESTAMPTZ NULL`) on record-of-truth tables (`applications`, `assessment_attempts`, `documents`, `certifications`, `portfolio_projects`) instead of `ON DELETE CASCADE`, so institution/industry analytics and placement history survive account deactivation. `users` and `organizations` should also soft-delete (flip `status` to `INACTIVE`) rather than hard-delete.
 
-## Performance & Scalability
+### Performance & Scalability
 - Read-heavy dashboard aggregates (institution skill distribution, placement trends, industry demand trends) should be served from materialized views refreshed on a schedule or on write-trigger, not computed live from OLTP tables per request.
 - Full-text search on `opportunities` (title/description) via a generated `tsvector` column + GIN index — avoids `ILIKE '%...%'` table scans as the opportunity catalog grows.
 - Redis cache for frequently-read, slow-changing reference data (skills list, skill categories, published opportunity listings) with short TTLs.
 - Connection pooling via SQLAlchemy's pool settings tuned for the deployment (or PgBouncer in front of RDS once concurrent connections grow beyond a few dozen).
 - Pagination is mandatory on every list endpoint (already specified) — cap `pageSize` server-side (e.g., max 100) regardless of what the client requests.
 
-## Observability
+### Observability
 - Structured JSON logging (`structlog`) with request IDs, so logs are traceable per request across API → service → repository.
 - `/health` and `/ready` endpoints for load balancer checks.
 - Basic metrics (request latency, error rate, queue depth) exported for CloudWatch — this is what actually implements the "Monitor & Improve" step already promised in the pitch deck's methodology slide.
 
-## Extensibility
+### Extensibility
 - Service layer methods should accept/return domain objects, not ORM models directly, so a future AI/recommendation service can call into (e.g.) `SkillService.get_gap(user_id)` without depending on FastAPI or SQLAlchemy internals.
 - New `opportunity_type` / `collaboration_type` / `document_type` values are additive VARCHAR values (already the doc's convention) — no migration needed to introduce new categories.
 
-# 3. Common Technical Standards
+# 3. Tech Stack
+
+## 3.1 Common Technical Standards
 
 - PostgreSQL UUID primary keys
 - SQLAlchemy 2.x
@@ -159,7 +142,129 @@ created_at TIMESTAMPTZ
 updated_at TIMESTAMPTZ
 ```
 
-# 4. High-Level Domain Model
+## 3.2 Backend Libraries (FastAPI)
+
+```text
+FastAPI
+SQLAlchemy 2.x
+Alembic
+Pydantic v2
+pydantic-settings
+psycopg
+pytest / pytest-asyncio / httpx (test client)
+
+argon2-cffi              # password hashing
+python-jose[cryptography] # JWT signing/verification
+redis                    # cache + rate limiting + job broker
+arq                      # lightweight async-native job queue (fits FastAPI's async model
+                         # better than Celery, which is thread/process-based)
+boto3                    # S3 presigned URLs for resumes/certificates/logos
+slowapi                  # rate limiting middleware
+structlog                # structured logging
+faker / factory_boy      # seed & test data generation
+```
+
+## 3.3 Frontend Libraries (React)
+
+(added on top of the existing React.js choice, not a stack change):
+
+```text
+TypeScript              # the UI already models ~16 distinct screens with structured data
+                        # (skill scores, application status, analytics) — types catch
+                        # cross-feature drift as the app grows; plain JS won't scale here.
+Vite                    # faster dev/build than CRA, which is unmaintained
+React Router v6         # role-aware routing (Student/Academician/Industry/Institution dashboards)
+TanStack Query          # server-state caching/invalidation for API data — avoids hand-rolled
+                        # loading/error/refetch logic in every feature module
+Zustand (or Redux Toolkit if the team prefers more structure)  # client-only UI state
+React Hook Form + Zod   # the multi-step forms in the mocks (Skill Assessment wizard,
+                        # Post Opportunity 3-step form) need this more than plain state
+Recharts or Chart.js    # institution analytics screens (skill donut, placement trend line)
+```
+
+# 4. Project Structure
+
+## 4.1 Backend (FastAPI) Project Structure
+
+```text
+backend/
+├── app/
+│   ├── main.py
+│   ├── core/
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── security.py
+│   │   ├── cache.py            # Redis client
+│   │   ├── storage.py          # S3 presigned URL helper
+│   │   ├── logging.py          # structlog setup
+│   │   └── exceptions.py
+│   ├── models/
+│   │   ├── user.py
+│   │   ├── role.py
+│   │   ├── organization.py
+│   │   ├── profile.py
+│   │   ├── skill.py
+│   │   ├── assessment.py
+│   │   ├── opportunity.py
+│   │   ├── application.py
+│   │   ├── learning_program.py
+│   │   ├── portfolio.py
+│   │   ├── collaboration.py
+│   │   ├── notification.py     │   │   ├── audit_log.py        │   │   ├── recommendation.py
+│   │   └── career_readiness.py
+│   ├── schemas/
+│   ├── repositories/
+│   ├── services/
+│   ├── api/
+│   │   └── v1/
+│   ├── workers/                # async job entrypoints
+│   │   ├── worker.py
+│   │   ├── notification_jobs.py
+│   │   └── refresh_view_jobs.py
+│   └── tests/
+├── alembic/
+├── requirements.txt
+└── README.md
+```
+
+## 4.2 Frontend (React) Project Structure
+
+```text
+frontend/
+├── src/
+│   ├── api/
+│   ├── components/
+│   │   ├── common/
+│   │   ├── layout/
+│   │   └── forms/
+│   ├── features/
+│   │   ├── auth/
+│   │   ├── users/
+│   │   ├── profiles/
+│   │   ├── skills/
+│   │   ├── assessments/
+│   │   ├── opportunities/
+│   │   ├── applications/
+│   │   ├── learning/
+│   │   ├── portfolio/
+│   │   ├── collaboration/
+│   │   ├── notifications/      │   │   └── dashboard/
+│   ├── hooks/
+│   ├── routes/
+│   ├── store/
+│   ├── types/
+│   ├── utils/
+│   └── App.tsx
+└── package.json
+```
+
+Frontend feature modules should align with backend domain modules.
+
+Frontend feature modules should align with backend domain modules.
+
+# 5. Domain Design Details
+
+## 5.1 High-Level Domain Model
 
 ```text
 USER
@@ -196,11 +301,11 @@ ASSESSMENT_ATTEMPT
  └── ASSESSMENT_ANSWER
 ```
 
-# 5. Models, Fields and Relationships
+## 5.2 Role & User
 
-## 5.1 Role
+### Role
 
-### roles
+#### roles
 
 Fields:
 
@@ -223,7 +328,7 @@ INSTITUTION_ADMIN
 PLATFORM_ADMIN
 ```
 
-### user_roles
+#### user_roles
 
 ```text
 id
@@ -246,9 +351,9 @@ User * ↔ * Role
 
 ---
 
-## 5.2 User
+### User
 
-### users
+#### users
 
 ```text
 id
@@ -293,11 +398,11 @@ User
 
 ---
 
-# 6. Organization Model
+## 5.3 Organization Model
 
 Use a common organization model instead of separate college/company tables.
 
-## organizations
+### organizations
 
 ```text
 id
@@ -330,7 +435,7 @@ GOVERNMENT
 OTHER
 ```
 
-## organization_members
+### organization_members
 
 ```text
 id
@@ -361,9 +466,9 @@ Training Manager → Industry
 
 ---
 
-# 7. Profile Models
+## 5.4 Profile Models
 
-## student_profiles
+### student_profiles
 
 ```text
 id
@@ -392,7 +497,7 @@ User 1 → 0..1 StudentProfile
 Institution 1 → * Students
 ```
 
-## academician_profiles
+### academician_profiles
 
 ```text
 id
@@ -410,7 +515,7 @@ created_at
 updated_at
 ```
 
-## industry_profiles
+### industry_profiles
 
 ```text
 id
@@ -426,9 +531,9 @@ updated_at
 
 ---
 
-# 8. Skills Domain
+## 5.5 Skills Domain
 
-## skill_categories
+### skill_categories
 
 ```text
 id
@@ -454,7 +559,7 @@ Leadership
 Domain Knowledge
 ```
 
-## skills
+### skills
 
 ```text
 id
@@ -473,7 +578,7 @@ Constraint:
 UNIQUE(category_id, name)
 ```
 
-## user_skills
+### user_skills
 
 ```text
 id
@@ -517,11 +622,11 @@ UNIQUE(user_id, skill_id)
 
 ---
 
-# 9. Assessment Domain
+## 5.6 Assessment Domain
 
 Phase 1 stores assessment data. Advanced scoring can be added later.
 
-## assessments
+### assessments
 
 ```text
 id
@@ -545,7 +650,7 @@ CAREER_INTEREST
 MIXED
 ```
 
-## assessment_questions
+### assessment_questions
 
 ```text
 id
@@ -571,7 +676,7 @@ RATING
 YES_NO
 ```
 
-## assessment_question_options
+### assessment_question_options
 
 ```text
 id
@@ -581,7 +686,7 @@ score
 display_order
 ```
 
-## assessment_attempts
+### assessment_attempts
 
 ```text
 id
@@ -604,7 +709,7 @@ COMPLETED
 ABANDONED
 ```
 
-## assessment_answers
+### assessment_answers
 
 ```text
 id
@@ -620,11 +725,11 @@ updated_at
 
 ---
 
-# 10. Opportunity Domain
+## 5.7 Opportunity Domain
 
 Use one generalized model for all opportunity types.
 
-## opportunities
+### opportunities
 
 ```text
 id
@@ -686,7 +791,7 @@ EXPIRED
 CANCELLED
 ```
 
-## opportunity_skills
+### opportunity_skills
 
 ```text
 id
@@ -721,9 +826,9 @@ Opportunity * ↔ * Skill
 
 ---
 
-# 11. Application Domain
+## 5.8 Application Domain
 
-## applications
+### applications
 
 ```text
 id
@@ -760,7 +865,7 @@ Constraint:
 UNIQUE(opportunity_id, applicant_user_id)
 ```
 
-## application_status_history
+### application_status_history
 
 ```text
 id
@@ -782,9 +887,9 @@ Application 1 → * StatusHistory
 
 ---
 
-# 12. Learning Domain
+## 5.9 Learning Domain
 
-## learning_programs
+### learning_programs
 
 ```text
 id
@@ -816,7 +921,7 @@ BOOTCAMP
 FDP
 ```
 
-## learning_program_skills
+### learning_program_skills
 
 ```text
 id
@@ -834,9 +939,9 @@ UNIQUE(learning_program_id, skill_id)
 
 ---
 
-# 13. Portfolio Domain
+## 5.10 Portfolio Domain
 
-## portfolio_projects
+### portfolio_projects
 
 ```text
 id
@@ -862,7 +967,7 @@ PRIVATE
 INSTITUTION_ONLY
 ```
 
-## project_skills
+### project_skills
 
 ```text
 id
@@ -877,7 +982,7 @@ Constraint:
 UNIQUE(project_id, skill_id)
 ```
 
-## certifications
+### certifications
 
 ```text
 id
@@ -894,7 +999,7 @@ created_at
 updated_at
 ```
 
-## documents
+### documents
 
 Generic metadata; actual object storage can be added later.
 
@@ -926,9 +1031,9 @@ OTHER
 
 ---
 
-# 14. Collaboration Domain
+## 5.11 Collaboration Domain
 
-## collaborations
+### collaborations
 
 ```text
 id
@@ -972,7 +1077,7 @@ COMPLETED
 CANCELLED
 ```
 
-## collaboration_participants
+### collaboration_participants
 
 ```text
 id
@@ -1001,11 +1106,11 @@ UNIQUE(collaboration_id, user_id)
 
 ---
 
-# 14A. Notifications Domain (New in v2)
+## 5.12 Notifications Domain
 
 The UI mock's "Notifications" screen (application status changes, new matching opportunities, scheduled workshops, system messages) needs a persisted table now — this is Phase 1 UI, not a Phase 5 integration. Actual delivery channels (email/push/SMS) stay a later phase; this table is just the in-app notification feed and its read state.
 
-## notifications
+### notifications
 
 ```text
 id
@@ -1040,15 +1145,15 @@ User 1 → * Notifications
 
 Notifications are written synchronously by the service layer on the triggering event (e.g., `ApplicationService.update_status()` also calls `NotificationService.create(...)`) and, from Phase 2 onward, fanned out to email/push by the async worker reading a lightweight outbox rather than blocking the request.
 
-## Institution ↔ Industry Partnership (clarification, not a new table)
+### Institution ↔ Industry Partnership
 
 The Institution Dashboard mock's "Industry Partners: 32" is a **derived count**, not a new persisted relationship: it's the distinct set of `organizations` an institution's students/academicians have an active `collaboration` or `opportunity.applications` history with. Modeling it as a first-class `institution_industry_partners` table would duplicate what's already derivable and risks the two going out of sync. If a future requirement needs a formal MOU/partnership status (e.g., "verified partner" badge, contract dates) independent of any activity, add a dedicated table then — don't pre-build it speculatively now.
 
-# 15. Future Recommendation Models
+## 5.13 Future Recommendation Models
 
 Create CRUD-ready persistence models but do not implement AI logic.
 
-## recommendations
+### recommendations
 
 ```text
 id
@@ -1085,7 +1190,7 @@ ADMIN
 HYBRID
 ```
 
-## career_readiness_scores
+### career_readiness_scores
 
 ```text
 id
@@ -1115,7 +1220,7 @@ Learning Recommendation
 
 without changing the foundational schema.
 
-# 16. PostgreSQL DDL
+## 5.14 PostgreSQL DDL
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -1146,7 +1251,7 @@ CREATE TABLE users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- New in v2: revocable refresh tokens + single-use password reset tokens
+-- revocable refresh tokens + single-use password reset tokens
 CREATE TABLE refresh_tokens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1168,7 +1273,7 @@ CREATE TABLE password_reset_tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- New in v2: generic audit trail for admin/sensitive actions (distinct from application_status_history)
+-- generic audit trail for admin/sensitive actions (distinct from application_status_history)
 CREATE TABLE audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   actor_user_id UUID REFERENCES users(id),
@@ -1386,7 +1491,7 @@ CREATE TABLE opportunities (
   published_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  -- New in v2: generated full-text search column, populated automatically by Postgres
+  -- generated full-text search column, populated automatically by Postgres
   search_vector tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
     setweight(to_tsvector('english', coalesce(description, '')), 'B')
@@ -1567,7 +1672,7 @@ CREATE TABLE career_readiness_scores (
 );
 ```
 
-# 16A. Additional DDL — Notifications & Dashboard Materialized Views (New in v2)
+## 5.15 Additional DDL — Notifications & Dashboard Materialized Views
 
 ```sql
 CREATE TABLE notifications (
@@ -1619,7 +1724,7 @@ CREATE UNIQUE INDEX idx_mv_institution_placement_trends
 -- REFRESH MATERIALIZED VIEW CONCURRENTLY mv_institution_placement_trends;
 ```
 
-# 17. Recommended Indexes
+## 5.16 Recommended Indexes
 
 ```sql
 CREATE INDEX idx_users_status ON users(status);
@@ -1643,7 +1748,7 @@ CREATE INDEX idx_collaborations_host ON collaborations(host_organization_id);
 CREATE INDEX idx_recommendations_user_type ON recommendations(user_id, recommendation_type);
 CREATE INDEX idx_readiness_user ON career_readiness_scores(user_id);
 
--- New in v2
+--
 CREATE INDEX idx_opportunities_search_vector ON opportunities USING GIN(search_vector);
 CREATE INDEX idx_notifications_user_unread ON notifications(user_id, read, created_at DESC);
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
@@ -1651,127 +1756,11 @@ CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE UNIQUE INDEX idx_refresh_tokens_hash ON refresh_tokens(token_hash);
 ```
 
-# 18. FastAPI Project Structure
+# 6. Phase-wise Scope & Roadmap
 
-```text
-backend/
-├── app/
-│   ├── main.py
-│   ├── core/
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── security.py
-│   │   ├── cache.py            # New in v2: Redis client
-│   │   ├── storage.py          # New in v2: S3 presigned URL helper
-│   │   ├── logging.py          # New in v2: structlog setup
-│   │   └── exceptions.py
-│   ├── models/
-│   │   ├── user.py
-│   │   ├── role.py
-│   │   ├── organization.py
-│   │   ├── profile.py
-│   │   ├── skill.py
-│   │   ├── assessment.py
-│   │   ├── opportunity.py
-│   │   ├── application.py
-│   │   ├── learning_program.py
-│   │   ├── portfolio.py
-│   │   ├── collaboration.py
-│   │   ├── notification.py     # New in v2
-│   │   ├── audit_log.py        # New in v2
-│   │   ├── recommendation.py
-│   │   └── career_readiness.py
-│   ├── schemas/
-│   ├── repositories/
-│   ├── services/
-│   ├── api/
-│   │   └── v1/
-│   ├── workers/                # New in v2: async job entrypoints
-│   │   ├── worker.py
-│   │   ├── notification_jobs.py
-│   │   └── refresh_view_jobs.py
-│   └── tests/
-├── alembic/
-├── requirements.txt
-└── README.md
-```
+## 6.1 Phase 1 CRUD API Scope
 
-Recommended libraries:
-
-```text
-FastAPI
-SQLAlchemy 2.x
-Alembic
-Pydantic v2
-pydantic-settings
-psycopg
-pytest / pytest-asyncio / httpx (test client)
-
-# New in v2
-argon2-cffi              # password hashing
-python-jose[cryptography] # JWT signing/verification
-redis                    # cache + rate limiting + job broker
-arq                      # lightweight async-native job queue (fits FastAPI's async model
-                         # better than Celery, which is thread/process-based)
-boto3                    # S3 presigned URLs for resumes/certificates/logos
-slowapi                  # rate limiting middleware
-structlog                # structured logging
-faker / factory_boy      # seed & test data generation
-```
-
-# 19. React Project Structure
-
-```text
-frontend/
-├── src/
-│   ├── api/
-│   ├── components/
-│   │   ├── common/
-│   │   ├── layout/
-│   │   └── forms/
-│   ├── features/
-│   │   ├── auth/
-│   │   ├── users/
-│   │   ├── profiles/
-│   │   ├── skills/
-│   │   ├── assessments/
-│   │   ├── opportunities/
-│   │   ├── applications/
-│   │   ├── learning/
-│   │   ├── portfolio/
-│   │   ├── collaboration/
-│   │   ├── notifications/      # New in v2
-│   │   └── dashboard/
-│   ├── hooks/
-│   ├── routes/
-│   ├── store/
-│   ├── types/
-│   ├── utils/
-│   └── App.tsx
-└── package.json
-```
-
-Frontend feature modules should align with backend domain modules.
-
-Recommended libraries (added on top of the existing React.js choice, not a stack change):
-
-```text
-TypeScript              # the UI already models ~16 distinct screens with structured data
-                        # (skill scores, application status, analytics) — types catch
-                        # cross-feature drift as the app grows; plain JS won't scale here.
-Vite                    # faster dev/build than CRA, which is unmaintained
-React Router v6         # role-aware routing (Student/Academician/Industry/Institution dashboards)
-TanStack Query          # server-state caching/invalidation for API data — avoids hand-rolled
-                        # loading/error/refetch logic in every feature module
-Zustand (or Redux Toolkit if the team prefers more structure)  # client-only UI state
-React Hook Form + Zod   # the multi-step forms in the mocks (Skill Assessment wizard,
-                        # Post Opportunity 3-step form) need this more than plain state
-Recharts or Chart.js    # institution analytics screens (skill donut, placement trend line)
-```
-
-# 20. Phase 1 CRUD API Scope
-
-## Users
+### Users
 
 ```text
 GET    /api/v1/users
@@ -1781,7 +1770,7 @@ PUT    /api/v1/users/{id}
 DELETE /api/v1/users/{id}
 ```
 
-## Organizations
+### Organizations
 
 ```text
 GET    /api/v1/organizations
@@ -1791,7 +1780,7 @@ PUT    /api/v1/organizations/{id}
 DELETE /api/v1/organizations/{id}
 ```
 
-## Profiles
+### Profiles
 
 ```text
 GET/POST/PUT /api/v1/student-profiles
@@ -1799,7 +1788,7 @@ GET/POST/PUT /api/v1/academician-profiles
 GET/POST/PUT /api/v1/industry-profiles
 ```
 
-## Skills
+### Skills
 
 ```text
 GET/POST/PUT/DELETE /api/v1/skill-categories
@@ -1811,7 +1800,7 @@ PUT  /api/v1/users/{user_id}/skills/{id}
 DELETE /api/v1/users/{user_id}/skills/{id}
 ```
 
-## Assessments
+### Assessments
 
 ```text
 GET/POST/PUT       /api/v1/assessments
@@ -1819,7 +1808,7 @@ GET/POST/PUT/DELETE /api/v1/questions
 POST/GET/PUT       /api/v1/assessment-attempts
 ```
 
-## Opportunities
+### Opportunities
 
 ```text
 GET/POST/PUT/DELETE /api/v1/opportunities
@@ -1839,20 +1828,20 @@ page
 pageSize
 ```
 
-## Applications
+### Applications
 
 ```text
 GET/POST/PUT /api/v1/applications
 GET          /api/v1/applications/{id}/history
 ```
 
-## Learning
+### Learning
 
 ```text
 GET/POST/PUT/DELETE /api/v1/learning-programs
 ```
 
-## Portfolio
+### Portfolio
 
 ```text
 GET/POST/PUT/DELETE /api/v1/projects
@@ -1860,14 +1849,14 @@ GET/POST/PUT/DELETE /api/v1/certifications
 GET/POST/DELETE     /api/v1/documents
 ```
 
-## Collaborations
+### Collaborations
 
 ```text
 GET/POST/PUT/DELETE /api/v1/collaborations
 POST/GET            /api/v1/collaborations/{id}/participants
 ```
 
-## Notifications (New in v2)
+### Notifications
 
 ```text
 GET  /api/v1/notifications              (filters: read, type; paginated)
@@ -1875,15 +1864,15 @@ POST /api/v1/notifications/{id}/read
 POST /api/v1/notifications/read-all
 ```
 
-## Search (New in v2)
+### Search
 
 ```text
 GET /api/v1/opportunities/search?q=...  (uses opportunities.search_vector, same pagination/filter contract as the list endpoint)
 ```
 
-# 21. Phase 1 Implementation Order
+## 6.2 Phase 1 Implementation Order
 
-## Priority 1 – Foundation
+### Priority 1 – Foundation
 
 ```text
 Database
@@ -1893,12 +1882,12 @@ Organizations
 Organization Membership
 Profiles
 Authentication: password hashing, JWT access tokens, refresh_tokens,
-  password_reset_tokens (New in v2 — was vaguely "authentication-ready" in v1)
-S3 presigned upload flow for documents (New in v2 — needed for resume/certificate
+  password_reset_tokens (was vaguely "authentication-ready" in v1)
+S3 presigned upload flow for documents (needed for resume/certificate
   upload, which is core Phase-1 UI, not a later integration)
 ```
 
-## Priority 2 – Skill Foundation
+### Priority 2 – Skill Foundation
 
 ```text
 Skill Categories
@@ -1906,7 +1895,7 @@ Skills
 User Skills
 ```
 
-## Priority 3 – Assessment
+### Priority 3 – Assessment
 
 ```text
 Assessments
@@ -1916,7 +1905,7 @@ Attempts
 Answers
 ```
 
-## Priority 4 – Opportunities
+### Priority 4 – Opportunities
 
 ```text
 Opportunities
@@ -1925,7 +1914,7 @@ Applications
 Application History
 ```
 
-## Priority 5 – Portfolio & Learning
+### Priority 5 – Portfolio & Learning
 
 ```text
 Projects
@@ -1936,14 +1925,14 @@ Learning Programs
 Learning Program Skills
 ```
 
-## Priority 6 – Collaboration
+### Priority 6 – Collaboration
 
 ```text
 Collaborations
 Participants
 ```
 
-## Priority 6A – Notifications & Search (New in v2)
+### Priority 6A – Notifications & Search
 
 ```text
 Notifications table + read/unread endpoints
@@ -1951,16 +1940,16 @@ Opportunity full-text search (search_vector + GIN index)
 audit_logs wired into opportunity/application/verification write paths
 ```
 
-## Priority 7 – Future Persistence
+### Priority 7 – Future Persistence
 
 ```text
 Recommendations
 Career Readiness Scores
 ```
 
-# 22. Future Phases
+## 6.3 Future Phases
 
-## Phase 2 – Workflows
+### Phase 2 – Workflows
 
 - Registration workflow
 - Profile completion workflow
@@ -1971,7 +1960,7 @@ Career Readiness Scores
 - Collaboration participation workflow
 - Basic notifications
 
-## Phase 3 – Rules and Matching
+### Phase 3 – Rules and Matching
 
 - Skill-gap calculation
 - Rule-based opportunity matching
@@ -1980,7 +1969,7 @@ Career Readiness Scores
 - Career readiness calculation
 - Explainable recommendations
 
-## Phase 4 – AI
+### Phase 4 – AI
 
 - LLM-assisted career guidance
 - AI skill extraction
@@ -1988,7 +1977,7 @@ Career Readiness Scores
 - Intelligent opportunity recommendations
 - Natural language profile assistance
 
-## Phase 5 – Integrations
+### Phase 5 – Integrations
 
 - Learning platforms
 - Certification providers
@@ -1997,7 +1986,7 @@ Career Readiness Scores
 - Email notifications
 - Calendar integration
 
-## Phase 6 – Analytics
+### Phase 6 – Analytics
 
 - Student readiness dashboards
 - Institution skill-gap analytics
@@ -2005,7 +1994,7 @@ Career Readiness Scores
 - Industry demand trends
 - Collaboration metrics
 
-# 23. Code Generation Requirements
+## 6.4 Code Generation Requirements
 
 The generated application MUST:
 
@@ -2049,11 +2038,11 @@ Learning Programs
 Collaborations
 Assessment Template
 Assessment Questions
-Sample Notifications (New in v2 — at least one per notification_type, so the
+Sample Notifications (at least one per notification_type, so the
   notification screen isn't empty on first demo run)
 ```
 
-# 24. Final Prompt for Code Generation
+## 6.5 Final Prompt for Code Generation
 
 Use this document as the authoritative technical blueprint for TalentSync Phase 1.
 
@@ -2083,7 +2072,7 @@ BACKEND
 
 DATABASE
 - Implement Phase 1 tables (including notifications, refresh_tokens,
-  password_reset_tokens, audit_logs — New in v2)
+  password_reset_tokens, audit_logs)
 - Foreign keys
 - Unique constraints
 - Indexes (including the search_vector GIN index)
