@@ -1770,6 +1770,16 @@ Flow B — Industry:
   Login → Dashboard → Post an opportunity (with required skills) →
   View ranked matching candidates (live scoring)
 
+Flow C — Academician:
+  Login → Dashboard → View institution skill-gap report
+  (skills demanded across live opportunity postings, aggregated,
+   compared against skills present in the institution's student body —
+   same matching engine as Flows A/B, viewed from a third angle)
+
+  Explicitly NOT included: curriculum management (add/edit courses,
+  syllabus-to-skill mapping). No curriculum entity exists in the schema;
+  this stays a static/mock screen, called out to judges as Phase 2 scope.
+    
 Shared connective tissue (recommended, cheap, high demo payoff):
   Student clicks "Apply" on a match → Industry sees that applicant appear
   in their candidate list. This is what makes it read as one platform,
@@ -1785,6 +1795,10 @@ skills, skill_categories, user_skills
 opportunities, opportunity_skills
 applications                          (minimal: create + list, for the "Apply" bridge)
 Auth: password hashing (argon2/bcrypt) + JWT access tokens
+
+Flow C reuses existing tables only: opportunity_skills, user_skills,
+student_profiles.institution_id. No curriculum schema is introduced
+for the demo.
 ```
 Deliberately deferred for the demo (schema can exist, logic doesn't need to run live):
 ```text
@@ -1820,6 +1834,10 @@ GET  /api/v1/opportunities/{id}/candidates        (industry: ranked applicants/m
 
 POST /api/v1/applications                          (student applies)
 GET  /api/v1/opportunities/{id}/applications        (industry: applicant list)
+GET /api/v1/institutions/{id}/skill-gap
+  → aggregates required skills across all live opportunities
+    MINUS skills present in that institution's student_profiles,
+    ranked by gap size
 ```
 ## 6.3 Demo Phase – Matching Logic
 Keep it explainable on stage: a simple skill-overlap score in both directions —
@@ -1828,8 +1846,13 @@ score = |skills_required ∩ skills_possessed| / |skills_required|
 ```
 This is literally Phase 3's "rule-based opportunity matching" pulled forward, computed synchronously in the request instead of pre-computed — correct framing for judges: "this is the first real slice of our recommendation engine, not a mock."
 
+Flow C reuses the same overlap-scoring approach, aggregated per institution rather than per user:
+  gap_score(skill) = count(opportunities requiring skill)
+                     - count(students in institution possessing skill)
+
 ## 6.4 Frontend Strategy for Dummy Screens
 To avoid a rewrite when real backends land later: build every screen against the same API client interface, and back the not-yet-implemented endpoints with static JSON fixtures (e.g. via MSW or a /mock folder) rather than hardcoding data into components. Swapping a screen from dummy to real in Phase 1 becomes a fixture-to-endpoint swap, not a UI rewrite.
+Note: the Academician's "Curriculum" screen specifically stays static/mock — only the skill-gap report on the Academician dashboard is live.
 
 ## 6.5 Phase 1 CRUD API Scope
 
@@ -2097,7 +2120,7 @@ The generated application MUST:
 24. Generate migrations for the full schema (all tables from Section 5), even though only the demo-phase tables get real service/API logic — this avoids a schema migration mid-hackathon-to-production transition.
 25. Build all non-demo screens against static fixture data behind the same API client contract as the real endpoints (see 6.4).
 26. Seed data must make the two demo flows visibly work on first load: at least 3 opportunities with varied required skills, 3+ students with varied skill profiles, so match rankings actually differ and look intentional on stage.
-
+27. Seed data must include enough overlap and gap between institution students' skills and posted opportunities' required skills that the Flow C ranking is visibly non-trivial on stage (not all-zero or all-matched).
 Seed data should include:
 
 ```text
@@ -2167,7 +2190,8 @@ Build the TalentSync Round-2 demo prototype:
 - Real, working backend + frontend ONLY for:
     Student: login, dashboard, profile/skill edit, recommended opportunities, apply
     Industry: login, dashboard, post opportunity, ranked candidates, applicant list
-- All other screens: full UI, static/mock data, same API client interface
+    Academician: login, dashboard, institution skill-gap report (read-only, reuses existing skills/opportunity schema — no curriculum entity)
+- Academician's curriculum screen: static/mock only- All other screens: full UI, static/mock data, same API client interface
 - Auth: password hashing + JWT access tokens (refresh token table present, rotation logic deferred)
 - Matching: synchronous skill-overlap scoring, both directions
 - Skip: Redis, async worker, materialized views, full-text search, audit log writes
