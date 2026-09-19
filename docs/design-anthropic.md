@@ -1758,7 +1758,80 @@ CREATE UNIQUE INDEX idx_refresh_tokens_hash ON refresh_tokens(token_hash);
 
 # 6. Phase-wise Scope & Roadmap
 
-## 6.1 Phase 1 CRUD API Scope
+## 6.1 Hackathon Demo Phase (Round 2 Prototype)
+Objective: one working, end-to-end vertical slice on real auth + real data, wrapped in a full UI shell where every other screen is present but backed by static/mock data.
+Fully backed (real DB + real API)
+```text
+Flow A — Student:
+  Login → Dashboard (skill profile, seeded) → Edit profile/skills →
+  View ranked matching opportunities (live scoring)
+
+Flow B — Industry:
+  Login → Dashboard → Post an opportunity (with required skills) →
+  View ranked matching candidates (live scoring)
+
+Shared connective tissue (recommended, cheap, high demo payoff):
+  Student clicks "Apply" on a match → Industry sees that applicant appear
+  in their candidate list. This is what makes it read as one platform,
+  not two disconnected demos, and it costs almost nothing extra since
+  `applications` already exists in the schema.
+```
+Foundation (this is real Phase 1, not throwaway)
+```text
+users, roles, user_roles
+organizations, organization_members   (1 institution, 2–3 industries, seeded)
+student_profiles, industry_profiles
+skills, skill_categories, user_skills
+opportunities, opportunity_skills
+applications                          (minimal: create + list, for the "Apply" bridge)
+Auth: password hashing (argon2/bcrypt) + JWT access tokens
+```
+Deliberately deferred for the demo (schema can exist, logic doesn't need to run live):
+```text
+Refresh token rotation           — issue a long-lived access token for the demo;
+                                    keep the refresh_tokens table in migrations so
+                                    Phase 1-proper just turns the logic on
+Redis / async worker             — no queue depth to justify it at demo data volume
+Materialized views               — dashboards query live tables directly; fine at
+                                    demo scale, revisit when data volume is real
+Full-text search on opportunities— plain filter/sort is enough for a handful of
+                                    seeded postings
+audit_logs writes                — table exists; wire the writes in Phase 1
+```
+
+Explicitly dummy / static screens
+Everything else in the UI (Academician, Institution Admin, Assessments, Learning Programs, Portfolio, Collaboration, Notifications feed) renders from static fixture data, not live endpoints. One deliberate shortcut worth calling out to judges as a design choice, not a gap: the Skill Assessment quiz itself is not built — the student's skill profile is pre-seeded directly into user_skills, and the dashboard reads that real data. So the metrics on screen are genuinely live, even though the interaction that would normally produce them isn't.
+
+## 6.2 Demo Phase – API Scope
+
+```text
+POST /api/v1/auth/register
+POST /api/v1/auth/login
+GET  /api/v1/users/me
+
+GET  /api/v1/skills                              (catalog, for profile-edit dropdowns)
+GET  /api/v1/users/me/skills
+PUT  /api/v1/users/me/skills
+
+POST /api/v1/opportunities                       (industry)
+GET  /api/v1/opportunities                        (industry: own postings)
+GET  /api/v1/opportunities/recommended            (student: ranked matches)
+GET  /api/v1/opportunities/{id}/candidates        (industry: ranked applicants/matches)
+
+POST /api/v1/applications                          (student applies)
+GET  /api/v1/opportunities/{id}/applications        (industry: applicant list)
+```
+## 6.3 Demo Phase – Matching Logic
+Keep it explainable on stage: a simple skill-overlap score in both directions —
+```text
+score = |skills_required ∩ skills_possessed| / |skills_required|
+```
+This is literally Phase 3's "rule-based opportunity matching" pulled forward, computed synchronously in the request instead of pre-computed — correct framing for judges: "this is the first real slice of our recommendation engine, not a mock."
+
+## 6.4 Frontend Strategy for Dummy Screens
+To avoid a rewrite when real backends land later: build every screen against the same API client interface, and back the not-yet-implemented endpoints with static JSON fixtures (e.g. via MSW or a /mock folder) rather than hardcoding data into components. Swapping a screen from dummy to real in Phase 1 becomes a fixture-to-endpoint swap, not a UI rewrite.
+
+## 6.5 Phase 1 CRUD API Scope
 
 ### Users
 
@@ -1870,7 +1943,7 @@ POST /api/v1/notifications/read-all
 GET /api/v1/opportunities/search?q=...  (uses opportunities.search_vector, same pagination/filter contract as the list endpoint)
 ```
 
-## 6.2 Phase 1 Implementation Order
+## 6.6 Phase 1 Implementation Order
 
 ### Priority 1 – Foundation
 
@@ -1947,7 +2020,7 @@ Recommendations
 Career Readiness Scores
 ```
 
-## 6.3 Future Phases
+## 6.7 Future Phases
 
 ### Phase 2 – Workflows
 
@@ -1994,7 +2067,7 @@ Career Readiness Scores
 - Industry demand trends
 - Collaboration metrics
 
-## 6.4 Code Generation Requirements
+## 6.8 Code Generation Requirements
 
 The generated application MUST:
 
@@ -2021,6 +2094,9 @@ The generated application MUST:
 21. Write to `notifications` from the service layer whenever an application status changes, an opportunity match is created, or a collaboration invite is sent.
 22. Write to `audit_logs` for admin/verification/status-change actions on opportunities, applications, and organization membership.
 23. Scaffold (but don't over-build) the async worker process and Redis connection now, even if its only Phase-1 job is notification writes and materialized view refresh — retrofitting a job queue later is more disruptive than the schema changes it was meant to avoid.
+24. Generate migrations for the full schema (all tables from Section 5), even though only the demo-phase tables get real service/API logic — this avoids a schema migration mid-hackathon-to-production transition.
+25. Build all non-demo screens against static fixture data behind the same API client contract as the real endpoints (see 6.4).
+26. Seed data must make the two demo flows visibly work on first load: at least 3 opportunities with varied required skills, 3+ students with varied skill profiles, so match rankings actually differ and look intentional on stage.
 
 Seed data should include:
 
@@ -2042,7 +2118,7 @@ Sample Notifications (at least one per notification_type, so the
   notification screen isn't empty on first demo run)
 ```
 
-## 6.5 Final Prompt for Code Generation
+## 6.9 Final Prompt for Code Generation
 
 Use this document as the authoritative technical blueprint for TalentSync Phase 1.
 
@@ -2083,6 +2159,19 @@ DATABASE
 WORKER
 - Minimal async worker (arq) wired to Redis for notification writes and
   scheduled materialized view refresh
+```
+## 6.10 Final Prompt for Code Generation (Demo Phase)
+```text
+Build the TalentSync Round-2 demo prototype:
+- Full DB schema and migrations per Section 5 (all tables)
+- Real, working backend + frontend ONLY for:
+    Student: login, dashboard, profile/skill edit, recommended opportunities, apply
+    Industry: login, dashboard, post opportunity, ranked candidates, applicant list
+- All other screens: full UI, static/mock data, same API client interface
+- Auth: password hashing + JWT access tokens (refresh token table present, rotation logic deferred)
+- Matching: synchronous skill-overlap scoring, both directions
+- Skip: Redis, async worker, materialized views, full-text search, audit log writes
+  (schema present, logic deferred to Phase 1)
 ```
 
 Important constraint:
