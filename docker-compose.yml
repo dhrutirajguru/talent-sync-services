@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: talentsync-postgres
+    environment:
+      POSTGRES_USER: talentsync
+      POSTGRES_PASSWORD: talentsync
+      POSTGRES_DB: talentsync
+    ports:
+      - "5432:5432"
+    volumes:
+      - talentsync_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talentsync"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: talentsync-api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://talentsync:talentsync@postgres:5432/talentsync
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./app:/code/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Note: Redis and a worker service are intentionally NOT included here.
+# Per design doc Section 6.1 (Demo Phase), they're deferred — the schema
+# supports them later, but the demo doesn't need a queue at this data volume.
+
+volumes:
+  talentsync_pgdata:
