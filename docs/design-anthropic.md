@@ -2198,6 +2198,57 @@ Build the TalentSync Round-2 demo prototype:
   (schema present, logic deferred to Phase 1)
 ```
 
+# 7. Build & Deployment
+## 7.1 Demo Phase — Local/Cheap Hosting
+For the hackathon, prioritize zero-friction setup and judge-accessible URLs over production infra:
+```text
+Backend:   uv-managed FastAPI app, containerized with Docker
+Database:  Postgres via Docker Compose locally; Supabase or Neon (free tier) for
+           a hosted demo URL — both give you a real Postgres instance without
+           standing up RDS
+Frontend:  Vite build, deployed to Vercel or Netlify (free tier, auto-deploy on push)
+Env vars:  .env for local, platform's secret manager (Vercel/Neon dashboard) for hosted
+```
+No CI/CD pipeline needed yet — manual docker compose up locally, push-to-deploy for the hosted demo link is enough for judging.
+
+## 7.2 Local Development Setup
+```text
+uv venv && uv sync                 # backend deps
+alembic upgrade head               # apply migrations
+python -m app.seed                 # load seed data (Section 6.8, item 26/27)
+uvicorn app.main:app --reload      # run API
+
+npm install && npm run dev         # frontend (Vite dev server)
+```
+
+docker-compose.yml should define: postgres, api, and (once introduced in Phase 1-proper) redis + worker — so the whole stack comes up with one command for any teammate.
+
+## 7.3 Post-Hackathon — Production Deployment (AWS, per Section 2.2 architecture)
+
+```text
+Compute:     ECS (Fargate) — two task definitions: API service, worker service
+Database:    RDS for PostgreSQL (Multi-AZ once beyond demo scale)
+Cache/Queue: ElastiCache for Redis
+Storage:     S3 (resumes, certificates, logos) — presigned URLs per Section 2.2
+Frontend:    S3 + CloudFront, or continue on Vercel if team prefers managed hosting
+Secrets:     AWS Secrets Manager / SSM Parameter Store — no secrets in source control
+Migrations:  Alembic run as a one-off ECS task on deploy, before the new API
+             task starts
+```
+## 7.4 CI/CD (introduce alongside Phase 1-proper, not the demo)
+```text
+On PR:    lint (ruff/eslint) + type check + pytest + build check
+On merge: build Docker image → push to ECR → deploy to ECS
+          → run Alembic migrations → health check → swap traffic
+```
+
+## 7.5 Environments
+```text
+local        — Docker Compose, developer machine
+staging      — mirrors production, used for demo/judge links post-hackathon
+               and pre-release testing
+production   — real users, Multi-AZ RDS, monitoring/alerting active (Section 2.2)
+```
 Important constraint:
 
 > Build Phase 1 as a clean CRUD foundation, while preserving the ability to add workflows, AI, recommendations, analytics and third-party integrations later without redesigning the core schema.
