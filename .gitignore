@@ -48,6 +48,9 @@ engine-services/app/data/ds-digikey_filters_metadata.json
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+
+# AWS
+*.pem
 crash.log
 crash.*.log
 
