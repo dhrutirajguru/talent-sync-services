@@ -3,3 +3,4 @@
 - uv sync
 - docker compose up -d postgres # just the DB for now
 - uv run alembic upgrade head
+- uv run uvicorn app.main:app --reload

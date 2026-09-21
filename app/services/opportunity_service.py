@@ -94,10 +94,12 @@ class OpportunityService:
         return results
 
     # ---- Flow B (continued): Industry sees ranked candidates for one posting ----
-    def list_candidates_for_opportunity(self, opportunity_id: uuid.UUID) -> list[CandidateMatchOut]:
+    def list_candidates_for_opportunity(self, opportunity_id: uuid.UUID, requesting_organization_id: uuid.UUID) -> list[CandidateMatchOut]:
         opportunity = self.opportunities.get_by_id(opportunity_id)
         if opportunity is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Opportunity not found.")
+        if opportunity.organization_id != requesting_organization_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "This opportunity belongs to a different organization.")
 
         required_ids = {req.skill_id for req in opportunity.required_skills}
         skill_names = {s.id: s.name for s in self.skills.list_all()}
