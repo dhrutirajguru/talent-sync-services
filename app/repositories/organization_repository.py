@@ -14,13 +14,11 @@ class OrganizationRepository:
     def get_by_id(self, org_id: uuid.UUID) -> Organization | None:
         return self.db.get(Organization, org_id)
 
-    def list_by_type(self, organization_type: str) -> list[Organization]:
-        stmt = select(Organization).where(
-            Organization.organization_type == organization_type,
-            Organization.deleted_at.is_(None),
-        )
+    def list_by_type(self, organization_type: str | None = None) -> list[Organization]:
+        stmt = select(Organization).where(Organization.deleted_at.is_(None))
+        if organization_type is not None:
+            stmt = stmt.where(Organization.organization_type == organization_type)
         return list(self.db.execute(stmt).scalars().all())
-
 
 class ProfileRepository:
     def __init__(self, db: Session):
