@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.application import Application
 from app.models.opportunity import Opportunity
-from app.models.user import User
 
 
 class ApplicationRepository:
@@ -15,7 +14,7 @@ class ApplicationRepository:
 
     def _with_relations(self, stmt):
         return stmt.options(
-            selectinload(Application.opportunity),
+            selectinload(Application.opportunity).selectinload(Opportunity.organization),
             selectinload(Application.applicant),
         )
 

@@ -21,6 +21,13 @@ def apply_to_opportunity(
     """The Flow A -> Flow B bridge: a student applies to a matched opportunity."""
     return ApplicationService(db).apply(student_user_id=current_user.id, payload=payload)
 
+@router.get("/applications/me", response_model=list[ApplicationOut])
+def list_my_applications(
+    current_user: User = Depends(require_role("STUDENT")),
+    db: Session = Depends(get_db),
+):
+    """Student: track every opportunity I've applied to (Flow A)."""
+    return ApplicationService(db).list_for_student(current_user.id)
 
 @router.get("/opportunities/{opportunity_id}/applications", response_model=list[ApplicationOut])
 def list_applications_for_opportunity(

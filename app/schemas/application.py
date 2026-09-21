@@ -15,6 +15,7 @@ class ApplicationOut(BaseModel):
     id: uuid.UUID
     opportunity_id: uuid.UUID
     opportunity_title: str
+    organization_name: str
     applicant_user_id: uuid.UUID
     applicant_name: str
     status: str

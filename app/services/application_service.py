@@ -16,12 +16,12 @@ def _to_application_out(application: Application) -> ApplicationOut:
         id=application.id,
         opportunity_id=application.opportunity_id,
         opportunity_title=application.opportunity.title,
+        organization_name=application.opportunity.organization.name,
         applicant_user_id=application.applicant_user_id,
         applicant_name=name,
         status=application.status,
         applied_at=application.applied_at,
     )
-
 
 class ApplicationService:
     def __init__(self, db: Session):
