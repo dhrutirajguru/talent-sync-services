@@ -25,7 +25,8 @@ actual seeded data (exact match percentages below), not assumed.
 
 2. **Use an incognito/private window**, so no leftover login session or cached UI state shows
    up on camera.
-3. **Confirm the live site loads** before you hit record: `https://dhrutirajguru.github.io/talentsync/`.
+3. **Confirm the live site loads** before you hit record: `https://dhrutirajguru.github.io/`
+   (also mirrored at `https://dhrutirajguru.github.io/talentsync/`, same build, either works).
    If GitHub Pages or the EC2 instance is flaky on the day, have a `npm run dev` local instance
    pointed at the same backend as a fallback (fastest fix: nothing to redeploy, just switch the
    URL you're recording).
@@ -66,23 +67,32 @@ That framing matters: say once, near the start, that this is real data and a rea
 engine, not a static prototype, then let the flows demonstrate it rather than repeating the
 claim.
 
-## Segment 1: Flow A, Student (about 90 seconds)
+## Segment 1: Flow A, Student (about 100 seconds)
 
-1. Go to `https://dhrutirajguru.github.io/talentsync/`, log in as `aarav.sharma@niat.edu.in`.
+1. Go to `https://dhrutirajguru.github.io/`, log in as `aarav.sharma@niat.edu.in`.
 2. **Dashboard**: point out the skill profile is real (seeded, but genuinely stored and read
    from `user_skills`), not hardcoded in the UI.
-3. **Skill Mapping / edit skills**: open the skills editor, show the current skill list. Optionally
-   add or adjust one skill live to prove it round-trips to the database (a small, real edit),
-   then navigate back to Dashboard to show the number changed.
-4. **Opportunities**: go to Recommended Opportunities. Call out the ranked list, and that Data
+3. **Skill Assessment**: open this screen and click through the quiz to "Generate My Skill
+   Profile." This is a good moment to state the one deliberate shortcut in the demo, since it's
+   a design choice worth owning rather than a gap to be caught later:
+
+   > "This questionnaire is a mock: it doesn't compute a score yet. What's real is where it
+   > lands you, the skill profile it would produce is already seeded and live on the next
+   > screen."
+
+   Submitting it navigates straight to Skill Mapping, which reinforces that line visually.
+4. **Skill Mapping / edit skills**: show the current skill list. Optionally add or adjust one
+   skill live to prove it round-trips to the database (a small, real edit), then navigate back
+   to Dashboard to show the number changed.
+5. **Opportunities**: go to Recommended Opportunities. Call out the ranked list, and that Data
    Analyst Intern is the top match. Say the scoring rule out loud, since it's meant to be
    explainable on stage:
 
    > "The match score is the overlap between the skills this posting requires and the skills
    > Aarav has: right now that's five out of five, a 100% match."
 
-5. **Apply**: click Apply on Data Analyst Intern. Confirm it submits.
-6. Go to **Applications**, show it now listed under "Submitted."
+6. **Apply**: click Apply on Data Analyst Intern. Confirm it submits.
+7. Go to **Applications**, show it now listed under "Submitted."
 
 ## Segment 2: bridge (about 15 seconds)
 
@@ -124,21 +134,39 @@ Log out, log in as `academician@niat.edu.in`.
    > actually have. Nothing here is precomputed for the demo: it's the same scoring approach as
    > the student and industry views, aggregated per institution instead of per user."
 
+## Optional: quick static-screen sweep (about 20 seconds, trim-safe)
+
+The rest of the nav (Digital Portfolio, Learning Programs, Industry Collaboration, Institution
+Analytics, Notifications, Profile) is real, designed UI backed by mock or partly-mock data, not
+generic "coming soon" placeholders. A brief sweep of one or two of these adds visual proof the
+platform is fully designed end to end, without claiming they're live:
+
+- From the student side: **Digital Portfolio** blends Aarav's real skills (live query) with mock
+  projects and certifications, a nice visual note if you have time for it.
+- From the academician side: **Institution Analytics** has real-looking stat cards and charts
+  (placement trends, skill distribution).
+
+Narrate it plainly if you include it:
+
+> "The rest of the platform, portfolio, learning programs, collaboration, institution analytics,
+> is fully designed in the UI, running on mock data behind the same API client interface. Wiring
+> each of these to live logic is a fixture-to-endpoint swap, not a rebuild."
+
 ## Closing line (about 15 seconds)
 
 Be upfront about scope, since judges will ask anyway and it reads better coming from you first:
 
 > "Everything you just saw, login, skill profiles, matching, applications, and the skill-gap
-> report, is running live. The rest of the platform, curriculum management, learning programs,
-> notifications, is scaffolded in the UI and schema but intentionally not wired to live logic
-> yet: that's exactly where Phase 1 picks up."
+> report, is running live. The rest of the platform is scaffolded in the UI and schema but
+> intentionally not wired to live logic yet: that's exactly where Phase 1 picks up."
 
 ## Total runtime target
 
-About 4.5 to 5 minutes end to end. If you're cutting for time, Segment 1 steps 2 to 3 (skill
-edit) and Segment 3 step 5 (scrolling the full ranked list) are the safest trims; the apply-to-
-candidates bridge (Segments 1 step 5/6 through Segment 3 step 4) is the connective tissue that
-makes this read as one platform and should not be cut.
+About 4.5 to 5.5 minutes end to end (add ~20 seconds if you include the optional static-screen
+sweep). If you're cutting for time, Segment 1 steps 3 to 4 (assessment beat and skill edit) and
+Segment 3 step 5 (scrolling the full ranked list) are the safest trims, along with the entire
+optional sweep above; the apply-to-candidates bridge (Segment 1 steps 6/7 through Segment 3
+step 4) is the connective tissue that makes this read as one platform and should not be cut.
 
 ## If something goes wrong on camera
 

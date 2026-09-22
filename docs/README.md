@@ -142,8 +142,9 @@ tradeoffs against a managed Postgres provider.
 **Live environment**
 
 - API: `https://dau-talentsync.duckdns.org` (TLS via Caddy + Let's Encrypt)
-- Frontend: `https://dhrutirajguru.github.io/talentsync/` (GitHub Pages, built from
-  `talent-sync-web`)
+- Frontend: `https://dhrutirajguru.github.io/` (GitHub Pages, built from `talent-sync-web`),
+  also mirrored at `https://dhrutirajguru.github.io/talentsync/`; see Frontend deployment notes
+  below for why there are two copies
 - Region: `us-east-1`, instance type `t2.micro`, with a 2 GB swap file (1 GiB RAM is tight for
   Postgres + API + Caddy together)
 
@@ -200,16 +201,34 @@ sudo docker compose -f docker-compose.prod.yml exec api alembic upgrade head
 
 ## Frontend deployment notes
 
-The frontend is built and deployed to a subfolder of a shared GitHub Pages user site
-(`dhrutirajguru.github.io/talentsync/`), not its own domain, which has two consequences:
+The frontend is deployed twice into the same GitHub Pages user site (`dhrutirajguru.github.io`),
+which also hosts a few older, unrelated projects in their own subfolders (`star-defenders/`,
+`version1/`, `version2/`):
 
-- The Vite build must be run with `--base=/talentsync/` so asset URLs resolve correctly:
-  `npm run build -- --base=/talentsync/`.
-- `BrowserRouter` uses `basename={import.meta.env.BASE_URL}` so client-side routing matches the
-  served subpath.
-- GitHub Pages has no SPA fallback by default, so a hard refresh or direct deep link under
-  `/talentsync/...` would normally 404. A `404.html` at the GitHub Pages repo root and a
-  restoration script in `talent-sync-web/index.html` implement the standard
-  [spa-github-pages](https://github.com/rafgraph/spa-github-pages) redirect workaround, scoped
-  to keep the first path segment (the project folder) intact since that repo hosts multiple
-  projects.
+- **Root** (`https://dhrutirajguru.github.io/`): the primary, judge-facing copy. Chosen
+  deliberately so root can be repurposed for something else after the hackathon without breaking
+  a link already shared with anyone; the fallback logic below is written so it keeps working
+  once that happens, without needing to be touched again.
+- **`/talentsync/` subfolder**: a secondary, stable copy at a URL that won't change even if root
+  content changes later.
+
+Because it's not served from its own domain, each copy needs its own build, since asset URLs
+are baked in at build time:
+
+```bash
+npm run build                        # root copy: default base "/"
+npm run build -- --base=/talentsync/ # subfolder copy
+```
+
+`BrowserRouter` uses `basename={import.meta.env.BASE_URL}`, which picks up whichever base was
+passed at build time, so routing matches whichever copy is being served without a hardcoded
+value.
+
+GitHub Pages has no SPA fallback by default, so a hard refresh or a direct deep link (e.g.
+`/talentsync/student/opportunities`, or a root deep link like `/student/opportunities`) would
+otherwise 404. A `404.html` at the GitHub Pages repo root and a restoration script in
+`talent-sync-web/index.html` implement the standard
+[spa-github-pages](https://github.com/rafgraph/spa-github-pages) redirect workaround.
+`404.html` only preserves the first path segment for the known legacy subfolders
+(`talentsync`, `star-defenders`, `version1`, `version2`); every other path is treated as a deep
+link into whatever app is currently at root.
